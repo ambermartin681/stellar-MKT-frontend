@@ -5,7 +5,12 @@ import React, {
   useEffect,
   useState,
 } from 'react';
-import { requestAccess, getAddress, isAllowed } from '@stellar/freighter-api';
+import {
+  isConnected,
+  isAllowed,
+  requestAccess,
+  getAddress,
+} from '@stellar/freighter-api';
 import axios from 'axios';
 import type { WalletState } from '../types';
 
@@ -23,16 +28,6 @@ function freighterErrMsg(err: unknown): string {
     return String((err as { message: unknown }).message);
   }
   return String(err);
-}
-
-/** Check if Freighter extension is present in the window object */
-function isFreighterInstalled(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    // Freighter injects window.freighter or window.freighterApi
-    (('freighter' in window && !!(window as Record<string, unknown>).freighter) ||
-      ('freighterApi' in window && !!(window as Record<string, unknown>).freighterApi))
-  );
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -59,23 +54,21 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      // Debug: log what Freighter injects into window
-      const win = window as Record<string, unknown>;
-      console.log('[Freighter debug] window.freighter:', win.freighter);
-      console.log('[Freighter debug] window.freighterApi:', win.freighterApi);
-      console.log('[Freighter debug] window.stellar:', win.stellar);
-      console.log('[Freighter debug] window keys with "freight":', 
-        Object.keys(win).filter(k => k.toLowerCase().includes('freight')));
+      // 1. Check Freighter is installed
+      const connResult = await isConnected();
+      if (!connResult.isConnected) {
+        throw new Error('NOT_INSTALLED');
+      }
 
-      // Skip window check — go straight to requestAccess()
-      // If Freighter is not installed it will throw or return an error
+      // 2. Request access — opens Freighter popup if not yet allowed
       const accessResult = await requestAccess();
-
-      console.log('[Freighter debug] requestAccess result:', accessResult);
-
       if (accessResult.error) {
         const msg = freighterErrMsg(accessResult.error);
-        if (msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('denied')) {
+        if (
+          msg.toLowerCase().includes('reject') ||
+          msg.toLowerCase().includes('denied') ||
+          msg.toLowerCase().includes('cancel')
+        ) {
           throw new Error('Connection rejected. Please approve the request in Freighter.');
         }
         throw new Error(msg);
@@ -107,13 +100,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const wasConnected = localStorage.getItem(STORAGE_KEY) === 'true';
     if (!wasConnected) return;
-    if (!isFreighterInstalled()) {
-      localStorage.removeItem(STORAGE_KEY);
-      return;
-    }
 
     (async () => {
       try {
+        const connResult = await isConnected();
+        if (!connResult.isConnected) {
+          localStorage.removeItem(STORAGE_KEY);
+          return;
+        }
         const allowResult = await isAllowed();
         if (!allowResult.isAllowed) {
           localStorage.removeItem(STORAGE_KEY);
