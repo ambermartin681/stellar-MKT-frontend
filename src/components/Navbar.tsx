@@ -25,9 +25,30 @@ export default function Navbar() {
       await connect();
       toast.success('Wallet connected!');
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : 'Failed to connect wallet'
-      );
+      const msg = err instanceof Error ? err.message : 'Failed to connect wallet';
+      // If Freighter isn't installed, show a clickable install link
+      if (msg.includes('not installed')) {
+        toast(
+          (t) => (
+            <span className="text-sm">
+              Freighter not found.{' '}
+              <a
+                href="https://freighter.app"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline font-semibold text-stellar-600"
+                onClick={() => toast.dismiss(t.id)}
+              >
+                Install it here
+              </a>
+              , then refresh the page.
+            </span>
+          ),
+          { duration: 8000, icon: '🔌' }
+        );
+      } else {
+        toast.error(msg);
+      }
     }
   };
 

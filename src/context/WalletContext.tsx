@@ -7,8 +7,10 @@ import React, {
 } from 'react';
 import {
   isConnected,
-  requestAccess,
+  isAllowed,
+  setAllowed,
   getAddress,
+  requestAccess,
 } from '@stellar/freighter-api';
 import axios from 'axios';
 import type { WalletState } from '../types';
@@ -19,6 +21,16 @@ const HORIZON_URL =
 
 const WalletContext = createContext<WalletState | null>(null);
 
+/** Normalise Freighter error — can be a string or { message: string } */
+function freighterErrMsg(err: unknown): string {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object' && 'message' in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return String(err);
+}
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
@@ -26,13 +38,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const fetchBalance = useCallback(async (addr: string) => {
     try {
-      const { data } = await axios.get(`${HORIZON_URL}/accounts/${addr}`);
+      const { data } = await axios.get(`${HORIZON_URL}/accounts/${addr}`, {
+        timeout: 8000,
+      });
       const nativeBalance = (
         data.balances as Array<{ asset_type: string; balance: string }>
       ).find((b) => b.asset_type === 'native');
-      if (nativeBalance) {
-        setBalance(parseFloat(nativeBalance.balance).toFixed(2));
-      }
+      setBalance(nativeBalance ? parseFloat(nativeBalance.balance).toFixed(2) : '0.00');
     } catch {
       setBalance('0.00');
     }
@@ -41,23 +53,45 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      // Check if Freighter is installed
-      const connectionResult = await isConnected();
-      if (!connectionResult.isConnected) {
+      // 1. Check Freighter is installed
+      let connectedResult: { isConnected: boolean; error?: unknown };
+      try {
+        connectedResult = await isConnected();
+      } catch {
         throw new Error(
-          'Freighter wallet is not installed. Please install it from https://freighter.app'
+          'Freighter wallet is not installed. Please install it from https://freighter.app and refresh the page.'
         );
       }
 
-      // Request access (prompts user if not already allowed)
-      const accessResult = await requestAccess();
-      if (accessResult.error) {
-        throw new Error(accessResult.error);
+      if (!connectedResult.isConnected) {
+        throw new Error(
+          'Freighter wallet is not installed. Please install it from https://freighter.app and refresh the page.'
+        );
       }
 
-      const pubKey = accessResult.address;
+      // 2. Check if app is already on the allow list
+      const allowedResult = await isAllowed();
+
+      let pubKey: string | undefined;
+
+      if (allowedResult.isAllowed) {
+        // Already allowed — silently get address
+        const addrResult = await getAddress();
+        if (addrResult.error) {
+          throw new Error(freighterErrMsg(addrResult.error));
+        }
+        pubKey = addrResult.address;
+      } else {
+        // Not yet allowed — prompt user via requestAccess
+        const accessResult = await requestAccess();
+        if (accessResult.error) {
+          throw new Error(freighterErrMsg(accessResult.error));
+        }
+        pubKey = accessResult.address;
+      }
+
       if (!pubKey) {
-        throw new Error('Failed to retrieve public key from Freighter');
+        throw new Error('Freighter did not return a public key. Please try again.');
       }
 
       setAddress(pubKey);
@@ -77,26 +111,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  // Auto-reconnect on mount if previously connected
+  // Auto-reconnect silently on mount if previously connected
   useEffect(() => {
     const wasConnected = localStorage.getItem(STORAGE_KEY) === 'true';
     if (!wasConnected) return;
 
     (async () => {
       try {
-        const connectionResult = await isConnected();
-        if (!connectionResult.isConnected) {
+        const connResult = await isConnected();
+        if (!connResult.isConnected) {
           localStorage.removeItem(STORAGE_KEY);
           return;
         }
-        // getAddress returns the key silently if already allowed
-        const addressResult = await getAddress();
-        if (addressResult.error || !addressResult.address) {
+        const allowResult = await isAllowed();
+        if (!allowResult.isAllowed) {
           localStorage.removeItem(STORAGE_KEY);
           return;
         }
-        setAddress(addressResult.address);
-        await fetchBalance(addressResult.address);
+        const addrResult = await getAddress();
+        if (addrResult.error || !addrResult.address) {
+          localStorage.removeItem(STORAGE_KEY);
+          return;
+        }
+        setAddress(addrResult.address);
+        await fetchBalance(addrResult.address);
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
