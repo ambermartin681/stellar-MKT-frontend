@@ -26,8 +26,7 @@ export default function Navbar() {
       toast.success('Wallet connected!');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to connect wallet';
-      // If Freighter isn't installed, show a clickable install link
-      if (msg.includes('not installed')) {
+      if (msg === 'NOT_INSTALLED' || msg.includes('not installed') || msg.includes('NOT_INSTALLED')) {
         toast(
           (t) => (
             <span className="text-sm">
@@ -41,10 +40,10 @@ export default function Navbar() {
               >
                 Install it here
               </a>
-              , then refresh the page.
+              , then <strong>hard-refresh</strong> the page (Ctrl+Shift+R).
             </span>
           ),
-          { duration: 8000, icon: '🔌' }
+          { duration: 10000, icon: '🔌' }
         );
       } else {
         toast.error(msg);

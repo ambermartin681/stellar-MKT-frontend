@@ -5,13 +5,7 @@ import React, {
   useEffect,
   useState,
 } from 'react';
-import {
-  isConnected,
-  isAllowed,
-  setAllowed,
-  getAddress,
-  requestAccess,
-} from '@stellar/freighter-api';
+import { requestAccess, getAddress, isAllowed } from '@stellar/freighter-api';
 import axios from 'axios';
 import type { WalletState } from '../types';
 
@@ -31,6 +25,16 @@ function freighterErrMsg(err: unknown): string {
   return String(err);
 }
 
+/** Check if Freighter extension is present in the window object */
+function isFreighterInstalled(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    // Freighter injects window.freighter or window.freighterApi
+    (('freighter' in window && !!(window as Record<string, unknown>).freighter) ||
+      ('freighterApi' in window && !!(window as Record<string, unknown>).freighterApi))
+  );
+}
+
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);
@@ -44,7 +48,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const nativeBalance = (
         data.balances as Array<{ asset_type: string; balance: string }>
       ).find((b) => b.asset_type === 'native');
-      setBalance(nativeBalance ? parseFloat(nativeBalance.balance).toFixed(2) : '0.00');
+      setBalance(
+        nativeBalance ? parseFloat(nativeBalance.balance).toFixed(2) : '0.00'
+      );
     } catch {
       setBalance('0.00');
     }
@@ -53,43 +59,25 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      // 1. Check Freighter is installed
-      let connectedResult: { isConnected: boolean; error?: unknown };
-      try {
-        connectedResult = await isConnected();
-      } catch {
-        throw new Error(
-          'Freighter wallet is not installed. Please install it from https://freighter.app and refresh the page.'
-        );
+      // Check window object directly — most reliable way to detect Freighter
+      if (!isFreighterInstalled()) {
+        throw new Error('NOT_INSTALLED');
       }
 
-      if (!connectedResult.isConnected) {
-        throw new Error(
-          'Freighter wallet is not installed. Please install it from https://freighter.app and refresh the page.'
-        );
-      }
+      // requestAccess() prompts the user if not yet allowed,
+      // or silently returns the key if already on the allow list.
+      const accessResult = await requestAccess();
 
-      // 2. Check if app is already on the allow list
-      const allowedResult = await isAllowed();
-
-      let pubKey: string | undefined;
-
-      if (allowedResult.isAllowed) {
-        // Already allowed — silently get address
-        const addrResult = await getAddress();
-        if (addrResult.error) {
-          throw new Error(freighterErrMsg(addrResult.error));
+      if (accessResult.error) {
+        const msg = freighterErrMsg(accessResult.error);
+        // User rejected the popup
+        if (msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('denied')) {
+          throw new Error('Connection rejected. Please approve the request in Freighter.');
         }
-        pubKey = addrResult.address;
-      } else {
-        // Not yet allowed — prompt user via requestAccess
-        const accessResult = await requestAccess();
-        if (accessResult.error) {
-          throw new Error(freighterErrMsg(accessResult.error));
-        }
-        pubKey = accessResult.address;
+        throw new Error(msg);
       }
 
+      const pubKey = accessResult.address;
       if (!pubKey) {
         throw new Error('Freighter did not return a public key. Please try again.');
       }
@@ -111,18 +99,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  // Auto-reconnect silently on mount if previously connected
+  // Auto-reconnect silently on mount if previously connected + already allowed
   useEffect(() => {
     const wasConnected = localStorage.getItem(STORAGE_KEY) === 'true';
     if (!wasConnected) return;
+    if (!isFreighterInstalled()) {
+      localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
 
     (async () => {
       try {
-        const connResult = await isConnected();
-        if (!connResult.isConnected) {
-          localStorage.removeItem(STORAGE_KEY);
-          return;
-        }
         const allowResult = await isAllowed();
         if (!allowResult.isAllowed) {
           localStorage.removeItem(STORAGE_KEY);
