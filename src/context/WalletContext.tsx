@@ -59,18 +59,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      // Check window object directly — most reliable way to detect Freighter
-      if (!isFreighterInstalled()) {
-        throw new Error('NOT_INSTALLED');
-      }
+      // Debug: log what Freighter injects into window
+      const win = window as Record<string, unknown>;
+      console.log('[Freighter debug] window.freighter:', win.freighter);
+      console.log('[Freighter debug] window.freighterApi:', win.freighterApi);
+      console.log('[Freighter debug] window.stellar:', win.stellar);
+      console.log('[Freighter debug] window keys with "freight":', 
+        Object.keys(win).filter(k => k.toLowerCase().includes('freight')));
 
-      // requestAccess() prompts the user if not yet allowed,
-      // or silently returns the key if already on the allow list.
+      // Skip window check — go straight to requestAccess()
+      // If Freighter is not installed it will throw or return an error
       const accessResult = await requestAccess();
+
+      console.log('[Freighter debug] requestAccess result:', accessResult);
 
       if (accessResult.error) {
         const msg = freighterErrMsg(accessResult.error);
-        // User rejected the popup
         if (msg.toLowerCase().includes('reject') || msg.toLowerCase().includes('denied')) {
           throw new Error('Connection rejected. Please approve the request in Freighter.');
         }

@@ -25,29 +25,10 @@ export default function Navbar() {
       await connect();
       toast.success('Wallet connected!');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect wallet';
-      if (msg === 'NOT_INSTALLED' || msg.includes('not installed') || msg.includes('NOT_INSTALLED')) {
-        toast(
-          (t) => (
-            <span className="text-sm">
-              Freighter not found.{' '}
-              <a
-                href="https://freighter.app"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline font-semibold text-stellar-600"
-                onClick={() => toast.dismiss(t.id)}
-              >
-                Install it here
-              </a>
-              , then <strong>hard-refresh</strong> the page (Ctrl+Shift+R).
-            </span>
-          ),
-          { duration: 10000, icon: '🔌' }
-        );
-      } else {
-        toast.error(msg);
-      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Navbar] connect error:', msg);
+      // Always show the real error so we can debug
+      toast.error(msg, { duration: 8000 });
     }
   };
 
